@@ -1,0 +1,65 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558 
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "shell",
+            "label": "Make handpiece build output directory",
+            "command": "mkdir",
+            "args": [
+                "-p",
+                "${workspaceRoot}/handpiece/software/build"
+            ],
+            "options": {
+                "cwd": "${workspaceRoot}/handpiece/software"
+            },
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "type": "shell",
+            "label": "Configure handpiece build",
+            "command": "cmake",
+            "args": [
+                "-DCMAKE_TOOLCHAIN_FILE=${workspaceRoot}/handpiece/software/cmake/project-toolchain-config.cmake",
+                "-DCMAKE_BUILD_TYPE=MinSizeRel",
+                "${workspaceRoot}/handpiece/software"
+            ],
+            "options": {
+                "cwd": "${workspaceRoot}/handpiece/software/build"
+            },
+            "dependsOn": "Make handpiece build output directory",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "type": "shell",
+            "label": "Compile handpiece software",
+            "command": "make",
+            "options": {
+                "cwd": "${workspaceRoot}/handpiece/software/build"
+            },
+            "dependsOn": "Configure handpiece build",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "type": "shell",
+            "label": "Upload handpiece software",
+            "command": "make",
+            "args": [
+                "upload_handpiece"
+            ],
+            "options": {
+                "cwd": "${workspaceRoot}/handpiece/software/build"
+            },
+            "dependsOn": "Compile handpiece software",
+            "group": "none",
+            "problemMatcher": []
+        }
+    ]
+}
