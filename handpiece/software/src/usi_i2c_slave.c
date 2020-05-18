@@ -30,7 +30,7 @@ char usi_i2c_mode;
 // The I2C register file is stored as an array of pointers, point these to whatever your I2C registers
 // need to read/write in your code.  This abstracts the buffer and makes it easier to write directly
 // to values in your code.
-char*    USI_Slave_register_buffer[USI_SLAVE_REGISTER_COUNT];
+uint8_t* USI_Slave_register_buffer[USI_SLAVE_REGISTER_COUNT];
 uint8_t  USI_Slave_internal_address = 0;
 char     USI_Slave_internal_address_set = 0;
 
