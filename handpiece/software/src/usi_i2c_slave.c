@@ -48,13 +48,13 @@ enum
 ////USI Register Setup Values////////////////////
 /////////////////////////////////////////////////
 
-#define USI_SLAVE_COUNT_ACK_USISR			0b01110000 | (0x0E << USICNT0)	//Counts one clock (ACK)
-#define USI_SLAVE_COUNT_BYTE_USISR			0b01110000 | (0x00 << USICNT0)	//Counts 8 clocks (BYTE)
-#define USI_SLAVE_CLEAR_START_USISR			0b11110000 | (0x00 << USICNT0)  //Clears START flag
-#define USI_SLAVE_SET_START_COND_USISR		0b01110000 | (0x00 << USICNT0)
-#define USI_SLAVE_SET_START_COND_USICR		0b10101000
-#define USI_SLAVE_STOP_DID_OCCUR_USICR		0b10111000
-#define USI_SLAVE_STOP_NOT_OCCUR_USICR		0b11101000
+#define USI_SLAVE_COUNT_ACK_USISR           0b01110000 | (0x0E << USICNT0)  //Counts one clock (ACK)
+#define USI_SLAVE_COUNT_BYTE_USISR          0b01110000 | (0x00 << USICNT0)  //Counts 8 clocks (BYTE)
+#define USI_SLAVE_CLEAR_START_USISR         0b11110000 | (0x00 << USICNT0)  //Clears START flag
+#define USI_SLAVE_SET_START_COND_USISR      0b01110000 | (0x00 << USICNT0)
+#define USI_SLAVE_SET_START_COND_USICR      0b10101000
+#define USI_SLAVE_STOP_DID_OCCUR_USICR      0b10111000
+#define USI_SLAVE_STOP_NOT_OCCUR_USICR      0b11101000
 
 /////////////////////////////////////////////////
 ////USI Direction Macros/////////////////////////
@@ -65,14 +65,14 @@ enum
 #define USI_PINS_SDA            ( 1 << PIN_USI_SDA )
 #define USI_PINS_SCL            ( 1 << PIN_USI_SCL )
 
-#define USI_SET_SDA_OUTPUT()	{ DDR_USI |=  (1 << PORT_USI_SDA); }
-#define USI_SET_SDA_INPUT() 	{ DDR_USI &= ~(1 << PORT_USI_SDA); }
+#define USI_SET_SDA_OUTPUT()    { DDR_USI |=  (1 << PORT_USI_SDA); }
+#define USI_SET_SDA_INPUT()     { DDR_USI &= ~(1 << PORT_USI_SDA); }
 
-#define USI_SET_SCL_OUTPUT()	{ DDR_USI |=  (1 << PORT_USI_SCL); }
-#define USI_SET_SCL_INPUT() 	{ DDR_USI &= ~(1 << PORT_USI_SCL); }
+#define USI_SET_SCL_OUTPUT()    { DDR_USI |=  (1 << PORT_USI_SCL); }
+#define USI_SET_SCL_INPUT()     { DDR_USI &= ~(1 << PORT_USI_SCL); }
 
-#define USI_SET_BOTH_OUTPUT()	{ DDR_USI |=  ((1 << PORT_USI_SDA) | (1 << PORT_USI_SCL)); }
-#define USI_SET_BOTH_INPUT() 	{ DDR_USI &= ~((1 << PORT_USI_SDA) | (1 << PORT_USI_SCL)); }
+#define USI_SET_BOTH_OUTPUT()   { DDR_USI |=  ((1 << PORT_USI_SDA) | (1 << PORT_USI_SCL)); }
+#define USI_SET_BOTH_INPUT()    { DDR_USI &= ~((1 << PORT_USI_SDA) | (1 << PORT_USI_SCL)); }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -85,8 +85,8 @@ void USI_I2C_Init(char address)
 
     USI_SET_BOTH_INPUT();
 
-	USICR = USI_SLAVE_SET_START_COND_USICR;
-	USISR = USI_SLAVE_CLEAR_START_USISR;
+    USICR = USI_SLAVE_SET_START_COND_USICR;
+    USISR = USI_SLAVE_CLEAR_START_USISR;
 }
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -160,7 +160,7 @@ ISR(USI_OVF_vect)
             {
                 PORTB ^= (1 << PB4); // green
             }
-        
+
             if((USIDR == 0) || ((USIDR >> 1) == usi_i2c_slave_address))
             {
                 if (USIDR & 0x01)
@@ -217,7 +217,7 @@ ISR(USI_OVF_vect)
         //  to continue sending data.                                          //
         /////////////////////////////////////////////////////////////////////////
         case USI_SLAVE_SEND_DATA_ACK_CHECK:
-            
+
             if(USIDR & 0x01)
             {
                 //The master sent a NACK, indicating that it will not accept
@@ -284,7 +284,7 @@ ISR(USI_OVF_vect)
         case USI_SLAVE_RECV_DATA_ACK_SEND:
 
             USI_I2C_Slave_State = USI_SLAVE_RECV_DATA_WAIT;
-            
+
             if(USI_Slave_internal_address_set == 0)
             {
                 USI_Slave_internal_address = USIDR;
@@ -294,7 +294,7 @@ ISR(USI_OVF_vect)
             {
                 *(USI_Slave_register_buffer[USI_Slave_internal_address]) = USIDR;
             }
-            
+
             USIDR = 0;
 
             USI_SET_SDA_OUTPUT();
