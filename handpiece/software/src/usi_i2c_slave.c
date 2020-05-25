@@ -30,7 +30,7 @@ char usi_i2c_mode;
 // The I2C register file is stored as an array of pointers, point these to whatever your I2C registers
 // need to read/write in your code.  This abstracts the buffer and makes it easier to write directly
 // to values in your code.
-uint8_t* USI_Slave_register_buffer[USI_SLAVE_REGISTER_COUNT];
+volatile uint8_t* USI_Slave_register_buffer[USI_SLAVE_REGISTER_COUNT];
 uint8_t  USI_Slave_internal_address = 0;
 char     USI_Slave_internal_address_set = 0;
 
@@ -60,28 +60,33 @@ enum
 ////USI Direction Macros/////////////////////////
 /////////////////////////////////////////////////
 
+// These macros make the stop condition detection code more readable.
+#define USI_PINS_SCL_SDA        ( ( 1 << PIN_USI_SDA ) | ( 1 << PIN_USI_SCL ) )
+#define USI_PINS_SDA            ( 1 << PIN_USI_SDA )
+#define USI_PINS_SCL            ( 1 << PIN_USI_SCL )
+
 #define USI_SET_SDA_OUTPUT()	{ DDR_USI |=  (1 << PORT_USI_SDA); }
 #define USI_SET_SDA_INPUT() 	{ DDR_USI &= ~(1 << PORT_USI_SDA); }
 
 #define USI_SET_SCL_OUTPUT()	{ DDR_USI |=  (1 << PORT_USI_SCL); }
 #define USI_SET_SCL_INPUT() 	{ DDR_USI &= ~(1 << PORT_USI_SCL); }
 
-#define USI_SET_BOTH_OUTPUT()	{ DDR_USI |= (1 << PORT_USI_SDA) | (1 << PORT_USI_SCL); }
+#define USI_SET_BOTH_OUTPUT()	{ DDR_USI |=  ((1 << PORT_USI_SDA) | (1 << PORT_USI_SCL)); }
 #define USI_SET_BOTH_INPUT() 	{ DDR_USI &= ~((1 << PORT_USI_SDA) | (1 << PORT_USI_SCL)); }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void USI_I2C_Init(char address)
 {
-	PORT_USI &= ~(1 << PORT_USI_SCL);
-	PORT_USI &= ~(1 << PORT_USI_SDA);
+    PORT_USI |= (1 << PORT_USI_SCL);
+    PORT_USI |= (1 << PORT_USI_SDA);
 
-	usi_i2c_slave_address = address;
+    usi_i2c_slave_address = address;
 
-	USI_SET_BOTH_INPUT();
-	
-	USICR = (1 << USISIE) | (0 << USIOIE) | (1 << USIWM1) | (0 << USIWM0) | (1 << USICS1) | (0 << USICS0) | (0 << USICLK) | (0 << USITC);
-	USISR = (1 << USISIF) | (1 << USIOIF) | (1 << USIPF) | (1 << USIDC);
+    USI_SET_BOTH_INPUT();
+
+	USICR = USI_SLAVE_SET_START_COND_USICR;
+	USISR = USI_SLAVE_CLEAR_START_USISR;
 }
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -96,33 +101,31 @@ void USI_I2C_Init(char address)
 //  triggering the first state table interrupt.  If a stop condition occurs,   //
 //  reset the start condition detector to detect the next start condition.     //
 /////////////////////////////////////////////////////////////////////////////////
-
 ISR(USI_START_vect)
 {
-	USI_I2C_Slave_State = USI_SLAVE_CHECK_ADDRESS;
+    USI_I2C_Slave_State = USI_SLAVE_CHECK_ADDRESS;
 
-	USI_SET_SDA_INPUT();
+    USI_SET_SDA_INPUT();
 
+    // wait for SCL to go low to ensure the Start Condition has completed (the
+    // start detector will hold SCL low ) - if a Stop Condition arises then leave
+    // the interrupt to prevent waiting forever - don't use USISR to test for Stop
+    // Condition as in Application Note AVR312 because the Stop Condition Flag is
+    // going to be set from the last TWI sequence
+    while( (PIN_USI & USI_PINS_SCL_SDA) == USI_PINS_SCL );
 
-	// wait for SCL to go low to ensure the Start Condition has completed (the
-	// start detector will hold SCL low ) - if a Stop Condition arises then leave
-	// the interrupt to prevent waiting forever - don't use USISR to test for Stop
-	// Condition as in Application Note AVR312 because the Stop Condition Flag is
-	// going to be set from the last TWI sequence
-	while((PIN_USI & (1 << PIN_USI_SCL)) && !((PIN_USI & (1 << PIN_USI_SDA))));
+    if(!(PIN_USI & USI_PINS_SDA))
+    {
+        // a Stop Condition did not occur
+        USICR = USI_SLAVE_STOP_NOT_OCCUR_USICR;
+    }
+    else
+    {
+        // a Stop Condition did occur
+        USICR = USI_SLAVE_STOP_DID_OCCUR_USICR;
+    }
 
-	if(!(PIN_USI & (1 << PIN_USI_SDA)))
-	{
-		// a Stop Condition did not occur
-		USICR = USI_SLAVE_STOP_NOT_OCCUR_USICR;
-	}
-	else
-	{
-		// a Stop Condition did occur
-    	USICR = USI_SLAVE_STOP_DID_OCCUR_USICR;
-	}
-
-	USISR = USI_SLAVE_CLEAR_START_USISR;
+    USISR = USI_SLAVE_CLEAR_START_USISR;
 }
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -136,164 +139,167 @@ ISR(USI_START_vect)
 //  the I2C protocol for proper transmission.                                  //
 /////////////////////////////////////////////////////////////////////////////////
 ISR(USI_OVF_vect)
-
 {
-	switch (USI_I2C_Slave_State)
-	{
-		/////////////////////////////////////////////////////////////////////////
-		// Case USI_SLAVE_CHECK_ADDRESS                                        //
-		//                                                                     //
-		//  The first state after the start condition, this state checks the   //
-		//  received byte against the stored slave address as well as the      //
-		//  global transmission address of 0x00.  If there is a match, the R/W //
-		//  bit is checked to branch either to sending or receiving modes.     //
-		//  If the address was not for this device, the USI system is          //
-		//  re-initialized for start condition.                                //
-		/////////////////////////////////////////////////////////////////////////
-		case USI_SLAVE_CHECK_ADDRESS:
+    PORTB ^= (1 << PB3); // yellow
+    switch (USI_I2C_Slave_State)
+    {
+        /////////////////////////////////////////////////////////////////////////
+        // Case USI_SLAVE_CHECK_ADDRESS                                        //
+        //                                                                     //
+        //  The first state after the start condition, this state checks the   //
+        //  received byte against the stored slave address as well as the      //
+        //  global transmission address of 0x00.  If there is a match, the R/W //
+        //  bit is checked to branch either to sending or receiving modes.     //
+        //  If the address was not for this device, the USI system is          //
+        //  re-initialized for start condition.                                //
+        /////////////////////////////////////////////////////////////////////////
+        case USI_SLAVE_CHECK_ADDRESS:
 
-			if((USIDR == 0) || ((USIDR >> 1) == usi_i2c_slave_address))
-			{				
-				if (USIDR & 0x01)
-				{
-					USI_I2C_Slave_State = USI_SLAVE_SEND_DATA;
-				}
-				else
-				{
-					USI_Slave_internal_address_set = 0;
-					USI_I2C_Slave_State = USI_SLAVE_RECV_DATA_WAIT;
-				}
+            if (USIDR == 0xAC)
+            {
+                PORTB ^= (1 << PB4); // green
+            }
+        
+            if((USIDR == 0) || ((USIDR >> 1) == usi_i2c_slave_address))
+            {
+                if (USIDR & 0x01)
+                {
+                    USI_I2C_Slave_State = USI_SLAVE_SEND_DATA;
+                }
+                else
+                {
+                    USI_Slave_internal_address_set = 1;
+                    USI_I2C_Slave_State = USI_SLAVE_RECV_DATA_WAIT;
+                }
 
-				//Set USI to send ACK
-				USIDR = 0;
+                //Set USI to send ACK
+                USIDR = 0;
 
-				USI_SET_SDA_OUTPUT();
+                USI_SET_SDA_OUTPUT();
 
-				USISR = USI_SLAVE_COUNT_ACK_USISR;
-			}
-			else
-			{
-				//Set USI to Start Condition Mode
-				USICR = USI_SLAVE_SET_START_COND_USICR;
-				USISR = USI_SLAVE_SET_START_COND_USISR;
-			}
+                USISR = USI_SLAVE_COUNT_ACK_USISR;
+            }
+            else
+            {
+                PORTB ^= (1 << PB1); // red
 
-			break;
+                //Set USI to Start Condition Mode
+                USICR = USI_SLAVE_SET_START_COND_USICR;
+                USISR = USI_SLAVE_SET_START_COND_USISR;
+            }
 
-		/////////////////////////////////////////////////////////////////////////
-		// Case USI_SLAVE_SEND_DATA_ACK_WAIT                                   //
-		//                                                                     //
-		//  Wait 1 clock period for the master to ACK or NACK the sent data	   //
-		//  If master NACK's, it means that master doesn't want any more data. //
-		/////////////////////////////////////////////////////////////////////////
-		case USI_SLAVE_SEND_DATA_ACK_WAIT:
+            break;
 
-			//After sending, immediately shut off PORT = 1 to prevent driving
-			//the line high (I2C should *NEVER* drive high, and could damage
-			//connected devices if operating at different voltage levels)
-			PORT_USI &= ~(1 << PORT_USI_SDA);
+        /////////////////////////////////////////////////////////////////////////
+        // Case USI_SLAVE_SEND_DATA_ACK_WAIT                                   //
+        //                                                                     //
+        //  Wait 1 clock period for the master to ACK or NACK the sent data	   //
+        //  If master NACK's, it means that master doesn't want any more data. //
+        /////////////////////////////////////////////////////////////////////////
+        case USI_SLAVE_SEND_DATA_ACK_WAIT:
 
-			USI_I2C_Slave_State = USI_SLAVE_SEND_DATA_ACK_CHECK;
-			USI_SET_SDA_INPUT();
-			USISR = USI_SLAVE_COUNT_ACK_USISR;
-			break;
+            //After sending, immediately shut off PORT = 1 to prevent driving
+            //the line high (I2C should *NEVER* drive high, and could damage
+            //connected devices if operating at different voltage levels)
+            PORT_USI &= ~(1 << PORT_USI_SDA);
 
-		/////////////////////////////////////////////////////////////////////////
-		// Case USI_SLAVE_SEND_DATA_ACK_CHECK                                  //
-		//                                                                     //
-		//  Check USIDR to see if master sent ACK or NACK.  If NACK, set up    //
-		//  a reset to START conditions, if ACK, fall through into SEND_DATA   //
-		//  to continue sending data.                                          //
-		/////////////////////////////////////////////////////////////////////////
-		case USI_SLAVE_SEND_DATA_ACK_CHECK:
-			
-			if(USIDR)
-			{
-				//The master sent a NACK, indicating that it will not accept
-				//more data.  Reset into START condition state
-				USICR = USI_SLAVE_SET_START_COND_USICR;
-				USISR = USI_SLAVE_SET_START_COND_USISR;
-				return;
-			}
-			//else: fall through into SEND_DATA
+            USI_I2C_Slave_State = USI_SLAVE_SEND_DATA_ACK_CHECK;
+            USI_SET_SDA_INPUT();
+            USISR = USI_SLAVE_COUNT_ACK_USISR;
+            break;
 
-		/////////////////////////////////////////////////////////////////////////
-		// Case USI_SLAVE_SEND_DATA                                            //
-		//                                                                     //
-		//  Set USIDR to the data to be sent, then set up SDA registers to     //
-		//  enable data transmission in the next 8 clocks.  Set to wait 8      //
-		//  clocks and proceed to wait for ACK.                                //
-		/////////////////////////////////////////////////////////////////////////
-		case USI_SLAVE_SEND_DATA:
+        /////////////////////////////////////////////////////////////////////////
+        // Case USI_SLAVE_SEND_DATA_ACK_CHECK                                  //
+        //                                                                     //
+        //  Check USIDR to see if master sent ACK or NACK.  If NACK, set up    //
+        //  a reset to START conditions, if ACK, fall through into SEND_DATA   //
+        //  to continue sending data.                                          //
+        /////////////////////////////////////////////////////////////////////////
+        case USI_SLAVE_SEND_DATA_ACK_CHECK:
+            
+            if(USIDR & 0x01)
+            {
+                //The master sent a NACK, indicating that it will not accept
+                //more data.  Reset into START condition state
+                USICR = USI_SLAVE_SET_START_COND_USICR;
+                USISR = USI_SLAVE_SET_START_COND_USISR;
+                return;
+            }
+            //else: fall through into SEND_DATA
 
-			if(USI_Slave_internal_address <= USI_SLAVE_REGISTER_COUNT)
-			{
-				USIDR = *(USI_Slave_register_buffer[USI_Slave_internal_address]);
-			}
-			else
-			{
-				USIDR = 0x00;
-			}
-			USI_Slave_internal_address++;
+        /////////////////////////////////////////////////////////////////////////
+        // Case USI_SLAVE_SEND_DATA                                            //
+        //                                                                     //
+        //  Set USIDR to the data to be sent, then set up SDA registers to     //
+        //  enable data transmission in the next 8 clocks.  Set to wait 8      //
+        //  clocks and proceed to wait for ACK.                                //
+        /////////////////////////////////////////////////////////////////////////
+        case USI_SLAVE_SEND_DATA:
 
-
-			USI_I2C_Slave_State = USI_SLAVE_SEND_DATA_ACK_WAIT;
-
-			//To send data, DDR for SDA must be 1 (Output) and PORT for SDA
-			//must also be 1 (line drives low on USIDR MSB = 0 or PORT = 0)
-			USI_SET_SDA_OUTPUT();
-			PORT_USI |= (1 << PORT_USI_SDA);
-
-			USISR = USI_SLAVE_COUNT_BYTE_USISR;
-
-			break;
+            if(USI_Slave_internal_address <= USI_SLAVE_REGISTER_COUNT)
+            {
+                USIDR = *(USI_Slave_register_buffer[USI_Slave_internal_address]);
+            }
+            else
+            {
+                USIDR = 0x00;
+            }
+            USI_Slave_internal_address++;
 
 
-		/////////////////////////////////////////////////////////////////////////
-		// Case USI_SLAVE_RECV_DATA_WAIT                                       //
-		//                                                                     //
-		//  Prepares to wait 8 clocks to receive a data byte from the master.  //
-		/////////////////////////////////////////////////////////////////////////
+            USI_I2C_Slave_State = USI_SLAVE_SEND_DATA_ACK_WAIT;
 
-		case USI_SLAVE_RECV_DATA_WAIT:
+            //To send data, DDR for SDA must be 1 (Output) and PORT for SDA
+            //must also be 1 (line drives low on USIDR MSB = 0 or PORT = 0)
+            USI_SET_SDA_OUTPUT();
+            PORT_USI |= (1 << PORT_USI_SDA);
 
-			USI_I2C_Slave_State = USI_SLAVE_RECV_DATA_ACK_SEND;
+            USISR = USI_SLAVE_COUNT_BYTE_USISR;
 
-			USI_SET_SDA_INPUT();
+            break;
 
-			USISR = USI_SLAVE_COUNT_BYTE_USISR;
+        /////////////////////////////////////////////////////////////////////////
+        // Case USI_SLAVE_RECV_DATA_WAIT                                       //
+        //                                                                     //
+        //  Prepares to wait 8 clocks to receive a data byte from the master.  //
+        /////////////////////////////////////////////////////////////////////////
+        case USI_SLAVE_RECV_DATA_WAIT:
 
-			break;
+            USI_I2C_Slave_State = USI_SLAVE_RECV_DATA_ACK_SEND;
 
+            USI_SET_SDA_INPUT();
 
-		/////////////////////////////////////////////////////////////////////////
-		// Case USI_SLAVE_RECV_DATA_ACK_SEND                                   //
-		//                                                                     //
-		//  After waiting for the master to finish transmission, this reads    //
-		//  USIDR into either the i2c buffer or internal address, then sends   //
-		//  an acknowledgement to the master.                                  //
-		/////////////////////////////////////////////////////////////////////////
+            USISR = USI_SLAVE_COUNT_BYTE_USISR;
 
-		case USI_SLAVE_RECV_DATA_ACK_SEND:
+            break;
 
-			USI_I2C_Slave_State = USI_SLAVE_RECV_DATA_WAIT;
-			
-			if(USI_Slave_internal_address_set == 0)
-			{
-				USI_Slave_internal_address = USIDR;
-				USI_Slave_internal_address_set = 1;
-			}
-			else if(USI_Slave_internal_address <= USI_SLAVE_REGISTER_COUNT)
-			{
-				*(USI_Slave_register_buffer[USI_Slave_internal_address]) = USIDR;
-			}
-			
-			USIDR = 0;
+        /////////////////////////////////////////////////////////////////////////
+        // Case USI_SLAVE_RECV_DATA_ACK_SEND                                   //
+        //                                                                     //
+        //  After waiting for the master to finish transmission, this reads    //
+        //  USIDR into either the i2c buffer or internal address, then sends   //
+        //  an acknowledgement to the master.                                  //
+        /////////////////////////////////////////////////////////////////////////
+        case USI_SLAVE_RECV_DATA_ACK_SEND:
 
-			USI_SET_SDA_OUTPUT();
+            USI_I2C_Slave_State = USI_SLAVE_RECV_DATA_WAIT;
+            
+            if(USI_Slave_internal_address_set == 0)
+            {
+                USI_Slave_internal_address = USIDR;
+                USI_Slave_internal_address_set = 1;
+            }
+            else if(USI_Slave_internal_address <= USI_SLAVE_REGISTER_COUNT)
+            {
+                *(USI_Slave_register_buffer[USI_Slave_internal_address]) = USIDR;
+            }
+            
+            USIDR = 0;
 
-			USISR = USI_SLAVE_COUNT_ACK_USISR;
+            USI_SET_SDA_OUTPUT();
 
-			break;
-	}
+            USISR = USI_SLAVE_COUNT_ACK_USISR;
+
+            break;
+    }
 }
