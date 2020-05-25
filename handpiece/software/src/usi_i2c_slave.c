@@ -155,7 +155,8 @@ ISR(USI_OVF_vect)
         /////////////////////////////////////////////////////////////////////////
         case USI_SLAVE_CHECK_ADDRESS:
 
-            if (USIDR == 0xAC)
+            // if (USIDR == 0xAC) // when in read
+            if (USIDR == 0xA4) // when in write
             {
                 PORTB ^= (1 << PB4); // green
             }
